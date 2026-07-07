@@ -1,16 +1,16 @@
-import random
+import random #start
 print("""===================
 Rock Paper Scissors
-===================""")
+===================""")#printing options for the user to choose from
 print("""1) ✊
 2) ✋
 3) ✌️""")
 choices= {1: "✊", 2: "✋", 3: "✌️"}
-player = int(input("pick a number from 1-3:"))
+player = int(input("pick a number from 1-3:"))#player input
 if player not in choices:
     print("invalid input")
     exit()
-computer = random.randint(1, 3)
+computer = random.randint(1, 3)# computer genrating a random number
 print(f"you picked: {choices[player]}")
 print(f"computer picked: {choices[computer]}")
 diff=(player - computer)%3
@@ -19,4 +19,4 @@ if diff == 0:
 elif diff == 1:
     print("player wins")
 else:
-    print("computer wins")                                   
+    print("computer wins") # end                           
