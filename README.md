@@ -9,5 +9,6 @@ rock paper scissors was my first project
 
 rock paper scissors lizard spock was a bonus project with the same concept as my first project
 
-make a gif is my second project 
+make a gif is my course completion project 
 
+portfolio manager is my second project
