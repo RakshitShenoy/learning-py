@@ -28,7 +28,18 @@ def fetch_price_history(tickers, period):
     return data
 
 # getting current price of the stock and raising error if invalid input such as 0 or infinite or other values
-def get_current_prices(tickers):
+def get_usd_to_inr_rate():
+    """Return the current USD-to-INR exchange rate from Yahoo Finance."""
+    try:
+        rate = yf.Ticker("USDINR=X").fast_info["last_price"]
+    except Exception as exc:
+        raise ValueError("The USD-to-INR exchange rate could not be fetched.") from exc
+    if not np.isfinite(rate) or rate <= 0:
+        raise ValueError("Yahoo Finance returned an invalid USD-to-INR exchange rate.")
+    return rate
+
+
+def get_current_prices(tickers, usd_to_inr_rate):
     prices = {}
     for ticker in tickers:
         try:
@@ -37,7 +48,7 @@ def get_current_prices(tickers):
             raise ValueError(f"No current price was found for {ticker}.") from exc
         if not np.isfinite(price) or price <= 0:
             raise ValueError(f"No valid current price was found for {ticker}.")
-        prices[ticker] = price
+        prices[ticker] = price if ticker.endswith(".NS") else price * usd_to_inr_rate
     return prices
 
 
@@ -53,18 +64,18 @@ def build_holdings_table(holdings_input, current_prices):
     rows = []
     for _, row in holdings_input.iterrows():
         ticker, shares = row["Ticker"], float(row["Shares Owned"])
-        cost_basis, price_now = float(row["Price Paid ($)"]), current_prices[ticker]
+        cost_basis, price_now = float(row["Price Paid (₹)"]), current_prices[ticker]
         if not np.isfinite(shares) or shares <= 0:
             raise ValueError(f"Shares Owned for {ticker} must be greater than zero.")
         if not np.isfinite(cost_basis) or cost_basis < 0:
-            raise ValueError(f"Price Paid ($) for {ticker} must be zero or greater.")
+            raise ValueError(f"Price Paid (₹) for {ticker} must be zero or greater.")
         market_value = shares * price_now
         cost_total = shares * cost_basis
         profit_loss = market_value - cost_total
         rows.append({
             "Ticker": ticker, "Shares": shares, "Price Paid": round(cost_basis, 2),
             "Current Price": round(price_now, 2), "Market Value": round(market_value, 2),
-            "Cost Basis Total": round(cost_total, 2), "Profit/Loss ($)": round(profit_loss, 2),
+            "Cost Basis Total": round(cost_total, 2), "Profit/Loss (₹)": round(profit_loss, 2),
             "Profit/Loss (%)": round(profit_loss / cost_total * 100, 2) if cost_total else 0.0,
             "Weight Entered (%)": row["Weight (%)"],
         })
@@ -136,7 +147,7 @@ def build_dashboard_figure(
     allocation = holdings_df.set_index("Ticker")["Current Weight (%)"]
 
     # profit_loss = profit or loss for each holding
-    profit_loss = holdings_df.set_index("Ticker")["Profit/Loss ($)"]
+    profit_loss = holdings_df.set_index("Ticker")["Profit/Loss (₹)"]
 
     axes[0, 0].pie(
         allocation,
@@ -161,7 +172,7 @@ def build_dashboard_figure(
     axes[0, 1].axhline(0, color="black", linewidth=0.8)
     axes[0, 1].set(
         title="Profit/Loss by Holding",
-        ylabel="Profit/Loss ($)",
+        ylabel="Profit/Loss (₹)",
     )
     axes[0, 1].tick_params(axis="x", rotation=45)
 
@@ -254,8 +265,9 @@ st.write(
 
 # ---- Step 1: user types in their holdings ----
 st.subheader("1. Your Holdings")
+st.caption("Enter ticker symbols in market-data format, for example NVDA for NVIDIA.")
 
-REQUIRED_COLUMNS = ["Ticker", "Shares Owned", "Price Paid ($)", "Weight (%)"]
+REQUIRED_COLUMNS = ["Ticker", "Shares Owned", "Price Paid (₹)", "Weight (%)"]
 
 input_method = st.radio(
     "How do you want to enter your portfolio?",
@@ -268,7 +280,7 @@ holdings_input = None
 if input_method == "Upload a CSV file":
     st.caption(
         "CSV must have these exact column headers: "
-        "Ticker, Shares Owned, Price Paid ($), Weight (%)"
+        "Ticker, Shares Owned, Price Paid (₹), Weight (%)"
     )
 
     # Let the user grab a template so their column names match exactly
@@ -276,7 +288,7 @@ if input_method == "Upload a CSV file":
     template_csv = pd.DataFrame({
         "Ticker": ["AAPL", "MSFT", "SPY"],
         "Shares Owned": [10.0, 5.0, 8.0],
-        "Price Paid ($)": [150.0, 280.0, 400.0],
+        "Price Paid (₹)": [150.0, 280.0, 400.0],
         "Weight (%)": [40, 35, 25],
     }).to_csv(index=False)
     st.download_button(
@@ -319,6 +331,10 @@ with col_b:
     history_period = st.selectbox(
         "History period", ["6mo", "1y", "2y", "5y"], index=1
     )
+st.caption(
+    "US tickers such as NVDA are converted from USD to ₹ automatically. "
+    "NSE tickers should end with .NS, for example RELIANCE.NS."
+)
 
 run_clicked = st.button("Run Analysis", type="primary")
 
@@ -342,18 +358,19 @@ if run_clicked:
         st.error("Each ticker may appear only once. Combine duplicate positions before running the analysis.")
         st.stop()
 
-    numeric_columns = ["Shares Owned", "Price Paid ($)", "Weight (%)"]
+    numeric_columns = ["Shares Owned", "Price Paid (₹)", "Weight (%)"]
     for column in numeric_columns:
         holdings_input[column] = pd.to_numeric(holdings_input[column], errors="coerce")
     if holdings_input[numeric_columns].isna().any().any():
-        st.error("Shares Owned, Price Paid ($), and Weight (%) must contain valid numbers.")
+        st.error("Shares Owned, Price Paid (₹), and Weight (%) must contain valid numbers.")
         st.stop()
 
     with st.spinner("Fetching prices..."):
         all_tickers = list(dict.fromkeys(tickers + [benchmark_ticker]))
         try:
             price_history = fetch_price_history(all_tickers, history_period)
-            current_prices = get_current_prices(tickers)
+            usd_to_inr_rate = get_usd_to_inr_rate()
+            current_prices = get_current_prices(tickers, usd_to_inr_rate)
         except Exception as e:
             st.error(f"Couldn't fetch market data: {e}")
             st.stop()
@@ -369,13 +386,13 @@ if run_clicked:
     st.dataframe(holdings_df, use_container_width=True, hide_index=True)
 
     total_cost = holdings_df["Cost Basis Total"].sum()
-    total_pl = holdings_df["Profit/Loss ($)"].sum()
+    total_pl = holdings_df["Profit/Loss (₹)"].sum()
     total_pl_pct = (total_pl / total_cost * 100) if total_cost else 0
 
     m1, m2, m3 = st.columns(3)
-    m1.metric("Total Portfolio Value", f"${total_value:,.2f}")
-    m2.metric("Total Profit/Loss", f"${total_pl:,.2f}", f"{total_pl_pct:.2f}%")
-    m3.metric("Total Cost Basis", f"${total_cost:,.2f}")
+    m1.metric("Total Portfolio Value", f"₹{total_value:,.2f}")
+    m2.metric("Total Profit/Loss", f"₹{total_pl:,.2f}", f"{total_pl_pct:.2f}%")
+    m3.metric("Total Cost Basis", f"₹{total_cost:,.2f}")
 
     # --- Performance metrics ---
     st.subheader("3. Performance Metrics")
